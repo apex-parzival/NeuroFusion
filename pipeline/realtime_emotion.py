@@ -61,6 +61,6 @@ def load_emotion_demo_features():
     Returns:
         X_feats, y_quadrant
     """
-    X_feats = np.load(PROCESSED_DIR / "deap_features_X.npy")
-    y_quad = np.load(PROCESSED_DIR / "deap_labels_quadrant.npy")
+    X_feats = np.load(PROCESSED_DIR / "deap_features_X.npy", mmap_mode='r')
+    y_quad = np.load(PROCESSED_DIR / "deap_labels_quadrant.npy", mmap_mode='r')
     return X_feats, y_quad

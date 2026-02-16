@@ -77,6 +77,7 @@ def load_mi_demo_epochs(split="test"):
     # We originally saved only CSP features as train/test, but the raw
     # epochs are all in bci2a_all_subjects_X.npy, y.npy.
     # For simple simulation, we just sample epochs from the full set.
-    X_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_X.npy")
-    y_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_y.npy")
+    # Use mmap_mode='r' to avoid loading the entire file into RAM
+    X_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_X.npy", mmap_mode='r')
+    y_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_y.npy", mmap_mode='r')
     return X_all, y_all
