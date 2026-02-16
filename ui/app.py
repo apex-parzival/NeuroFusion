@@ -34,13 +34,13 @@ MI_CLASSES = ["left", "right", "feet", "tongue"]
 EMO_CLASSES = ["sad/fatigued", "stressed/anxious", "calm/content", "excited/happy"]
 
 # ---------- CACHED LOADERS ----------
-@st.cache_data
+@st.cache_resource
 def get_cached_mi_epochs():
     """Cache the heavy MI epochs to avoid reloading on every rerun."""
     if not IMPORT_OK: return None, None
     return load_mi_demo_epochs()
 
-@st.cache_data
+@st.cache_resource
 def get_cached_emotion_features():
     """Cache the heavy Emotion features."""
     if not IMPORT_OK: return None, None
@@ -191,9 +191,26 @@ def main():
         if st.button("▶ Next Brain Step"):
             st.session_state.step_counter += 1
 
-            # pick random samples
-            idx_mi = random.randint(0, X_mi.shape[0] - 1)
-            idx_emo = random.randint(0, X_emo.shape[0] - 1)
+            # STRATIFIED RANDOM SAMPLING for better UI diversity
+            # 1. Pick a random target class (0..3)
+            # 2. Find indices of that class in true labels
+            # 3. Pick random index from those candidates
+            
+            # --- Motor Imagery ---
+            target_mi_class = random.randint(0, 3)
+            cand_mi = np.where(y_mi == target_mi_class)[0]
+            if len(cand_mi) > 0:
+                idx_mi = int(np.random.choice(cand_mi))
+            else:
+                idx_mi = random.randint(0, X_mi.shape[0] - 1)
+
+            # --- Emotion ---
+            target_emo_class = random.randint(0, 3)
+            cand_emo = np.where(y_emo == target_emo_class)[0]
+            if len(cand_emo) > 0:
+                idx_emo = int(np.random.choice(cand_emo))
+            else:
+                idx_emo = random.randint(0, X_emo.shape[0] - 1)
 
             epoch = X_mi[idx_mi]  # shape (n_ch, n_times)
             true_mi = int(y_mi[idx_mi])
