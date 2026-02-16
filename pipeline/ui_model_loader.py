@@ -37,39 +37,60 @@ def _load_mapping():
         _mapping_cache = json.loads(MAPPING.read_text())
     return _mapping_cache
 
+def get_available_subjects():
+    """Return list of subject IDs available in the mapping."""
+    mapping = _load_mapping()
+    return sorted(list(mapping.keys()))
+
+def load_specific_model(subj):
+    """Load ONLY the model for the given subject."""
+    if subj in _models_cache:
+        return _models_cache[subj]
+    
+    mapping = _load_mapping()
+    if subj not in mapping:
+        raise KeyError(f"Subject {subj} not found in model mapping")
+        
+    info = mapping[subj]
+    model_path = PROJECT_ROOT / info["model_path"]
+    suffix = model_path.suffix.lower()
+    
+    if suffix == ".pkl":
+        model = joblib.load(model_path)
+        mtype = info["best"]
+        entry = {"best": mtype, "model": model, "model_type": mtype, "path": str(model_path)}
+    elif suffix == ".h5":
+        if load_model is None:
+            raise RuntimeError("TensorFlow not available in this environment; cannot load .h5 models")
+        # Check cache for keras model to avoid re-loading shared objects if any
+        if subj in _keras_cache:
+            ker = _keras_cache[subj]
+        else:
+            ker = load_model(model_path)
+            _keras_cache[subj] = ker
+            
+        mtype = info["best"]
+        entry = {"best": mtype, "model": ker, "model_type": mtype, "path": str(model_path)}
+        
+        # try to load hybrid meta if exists
+        hybrid_meta = (PROJECT_ROOT / "models" / "hybrid" / f"{subj}_hybrid_meta.npz")
+        if hybrid_meta.exists():
+            try:
+                _hybrid_meta_cache[subj] = np.load(hybrid_meta)
+            except Exception:
+                pass
+    else:
+        raise RuntimeError(f"Unsupported model suffix: {suffix}")
+        
+    _models_cache[subj] = entry
+    return entry
+
 def load_models():
+    """Deprecated: Loads ALL models. Use load_specific_model instead."""
     mapping = _load_mapping()
     out = {}
-    for subj, info in mapping.items():
-        if subj in _models_cache:
-            out[subj] = _models_cache[subj]
-            continue
-        model_path = PROJECT_ROOT / info["model_path"]
-        suffix = model_path.suffix.lower()
-        if suffix == ".pkl":
-            model = joblib.load(model_path)
-            mtype = info["best"]
-            entry = {"best": mtype, "model": model, "model_type": mtype, "path": str(model_path)}
-        elif suffix == ".h5":
-            # load Keras model lazily and cache
-            if load_model is None:
-                raise RuntimeError("TensorFlow not available in this environment; cannot load .h5 models")
-            ker = load_model(model_path)
-            # determine type via mapping or filename
-            mtype = info["best"]
-            entry = {"best": mtype, "model": ker, "model_type": mtype, "path": str(model_path)}
-            _keras_cache[subj] = ker
-            # try to load hybrid meta if exists
-            hybrid_meta = (PROJECT_ROOT / "models" / "hybrid" / f"{subj}_hybrid_meta.npz")
-            if hybrid_meta.exists():
-                try:
-                    _hybrid_meta_cache[subj] = np.load(hybrid_meta)
-                except Exception:
-                    pass
-        else:
-            raise RuntimeError(f"Unsupported model suffix: {suffix}")
-        _models_cache[subj] = entry
-        out[subj] = entry
+    for subj in mapping:
+        out[subj] = load_specific_model(subj)
     return out
 
 # small helpers for combined-feature building if needed (copied from previous)
@@ -154,10 +175,11 @@ def predict_for_subject(subj, epoch=None, emo_vector=None, combined_features=Non
     - emo_vector: 1D array of emotion features (if hybrid used_emo True)
     - combined_features: optional 1D array (precomputed)
     """
-    models = load_models()
-    if subj not in models:
-        raise KeyError(f"No model for subject {subj}")
-    entry = models[subj]
+    """
+    predict_for_subject(subj, epoch=None, emo_vector=None, combined_features=None)
+    """
+    # Load just this subject's model
+    entry = load_specific_model(subj)
     model = entry["model"]
     mtype = entry["model_type"]
 

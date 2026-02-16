@@ -19,7 +19,11 @@ try:
         load_emotion_demo_features,
         emo_predict_features,
     )
-    from pipeline.ui_model_loader import load_models, predict_for_subject
+    from pipeline.ui_model_loader import (
+        get_available_subjects, 
+        load_specific_model, 
+        predict_for_subject
+    )
     IMPORT_OK = True
 except Exception as e:
     IMPORT_OK = False
@@ -28,6 +32,34 @@ except Exception as e:
 
 MI_CLASSES = ["left", "right", "feet", "tongue"]
 EMO_CLASSES = ["sad/fatigued", "stressed/anxious", "calm/content", "excited/happy"]
+
+# ---------- CACHED LOADERS ----------
+@st.cache_data
+def get_cached_mi_epochs():
+    """Cache the heavy MI epochs to avoid reloading on every rerun."""
+    if not IMPORT_OK: return None, None
+    return load_mi_demo_epochs()
+
+@st.cache_data
+def get_cached_emotion_features():
+    """Cache the heavy Emotion features."""
+    if not IMPORT_OK: return None, None
+    return load_emotion_demo_features()
+
+@st.cache_resource
+def get_cached_emotion_models():
+    """Cache the emotion classifier model."""
+    if not IMPORT_OK: return None
+    return load_emotion_models()
+
+@st.cache_resource
+def get_cached_subject_list():
+    """Cache the list of available subjects."""
+    if not IMPORT_OK: return []
+    try:
+        return get_available_subjects()
+    except Exception:
+        return []
 
 # ---------- STATE HELPERS ----------
 def init_state_if_needed():
@@ -41,23 +73,22 @@ def init_state_if_needed():
             "ambient_mode": "neutral"
         }
     
-    if "emo_models" not in st.session_state and IMPORT_OK:
-        st.session_state.emo_models = load_emotion_models()
-    if "models_loaded" not in st.session_state:
-        # load models mapping only, heavy objects cached in ui_model_loader
-        try:
-            st.session_state.models = load_models()
-            st.session_state.models_loaded = True
-        except Exception:
-            st.session_state.models_loaded = False
-    if "X_mi" not in st.session_state and IMPORT_OK:
-        X_mi, y_mi = load_mi_demo_epochs()
-        st.session_state.X_mi = X_mi
-        st.session_state.y_mi = y_mi
-    if "X_emo" not in st.session_state and IMPORT_OK:
-        X_emo, y_emo = load_emotion_demo_features()
-        st.session_state.X_emo = X_emo
-        st.session_state.y_emo = y_emo
+    # Load heavy data via cache
+    if "X_mi" not in st.session_state:
+        X_mi, y_mi = get_cached_mi_epochs()
+        if X_mi is not None:
+            st.session_state.X_mi = X_mi
+            st.session_state.y_mi = y_mi
+            
+    if "X_emo" not in st.session_state:
+        X_emo, y_emo = get_cached_emotion_features()
+        if X_emo is not None:
+            st.session_state.X_emo = X_emo
+            st.session_state.y_emo = y_emo
+
+    if "emo_models" not in st.session_state:
+        st.session_state.emo_models = get_cached_emotion_models()
+
     if "last_step" not in st.session_state:
         st.session_state.last_step = None
     if "event_log" not in st.session_state:
@@ -126,7 +157,7 @@ def main():
         )
 
         # Subject selection (list models available)
-        subj_options = sorted(list(st.session_state.models.keys())) if st.session_state.get("models_loaded") else []
+        subj_options = get_cached_subject_list()
         selected_subj = st.selectbox("Choose subject (used to load best model)", subj_options, index=0 if subj_options else None)
         st.session_state.selected_subj = selected_subj
 
