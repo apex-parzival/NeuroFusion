@@ -43,8 +43,26 @@ NeuroFusion is a hybrid Brain-Computer Interface (BCI) application that combines
 2.  **Navigate**: Open your browser to `http://localhost:8501`.
 3.  **Interact**: Select a subject and click "Next Brain Step" to simulate BCI commands.
 
+## Data Setup (Important)
+
+This repository excludes large dataset files. You must generate them before running the app.
+
+### 1. Motor Imagery Data (BCI IV 2a)
+The individual files are included. Run this script to combine them:
+```bash
+python scripts/reconstruct_data.py
+```
+
+### 2. Emotion Data (DEAP)
+1.  Download **"Data_Preprocessed_Python"** from [DEAP Dataset](https://www.eecs.qmul.ac.uk/mmv/datasets/deap/).
+2.  Place `s01.dat`...`s32.dat` in `data/deap/data_preprocessed_python/`.
+3.  Run: `python -m pipeline.preprocess_deap_emotion`.
+
+See [INSTRUCTIONS.md](INSTRUCTIONS.md) for full details.
+
 ## Project Structure
-- `ui/`: Contains the Streamlit web application.
-- `pipeline/`: Core BCI logic, feature extraction, and model handling.
-- `models/`: Trained model files.
-- `data/` & `processed/`: Dataset storage (git-ignored).
+- `ui/`: Streamlit application.
+- `pipeline/`: Data processing and model training scripts.
+- `models/`: Trained models (Git LFS).
+- `scripts/`: Helper scripts (e.g., data reconstruction).
+- `processed/`: Processed data files.
