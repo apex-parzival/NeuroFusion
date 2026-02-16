@@ -1,0 +1,9 @@
+streamlit>=1.32.0
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+joblib>=1.2.0
+mne>=1.6.0
+tensorflow>=2.15.0; sys_platform != 'darwin' or platform_machine != 'arm64'
+tensorflow-macos>=2.15.0; sys_platform == 'darwin' and platform_machine == 'arm64'
+python-dotenv>=1.0.0
