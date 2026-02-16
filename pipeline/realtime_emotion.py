@@ -54,13 +54,17 @@ def emo_predict_features(feature_vec, models):
     return pred, proba
 
 
-def load_emotion_demo_features():
+def load_emotion_data_v2():
     """
     Load all DEAP features and labels for demo.
+    Version 2: Uses mmap_mode='r'.
 
     Returns:
         X_feats, y_quadrant
     """
-    X_feats = np.load(PROCESSED_DIR / "deap_features_X.npy", mmap_mode='r')
-    y_quad = np.load(PROCESSED_DIR / "deap_labels_quadrant.npy", mmap_mode='r')
+    x_path = str(PROCESSED_DIR / "deap_features_X.npy")
+    y_path = str(PROCESSED_DIR / "deap_labels_quadrant.npy")
+    
+    X_feats = np.load(x_path, mmap_mode='r')
+    y_quad = np.load(y_path, mmap_mode='r')
     return X_feats, y_quad

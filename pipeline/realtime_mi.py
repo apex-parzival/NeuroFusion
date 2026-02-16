@@ -64,10 +64,11 @@ def mi_predict_epoch(epoch, models):
     return pred, proba
 
 
-def load_mi_demo_epochs(split="test"):
+def load_mi_data_v2(split="test"):
     """
     Load some demo epochs and labels from precomputed CSP split.
-
+    Version 2: Uses mmap_mode='r' to prevent MemoryError.
+    
     For now, we use the same train/test split as CSP features,
     but we will go back to raw epochs later if needed.
 
@@ -78,6 +79,10 @@ def load_mi_demo_epochs(split="test"):
     # epochs are all in bci2a_all_subjects_X.npy, y.npy.
     # For simple simulation, we just sample epochs from the full set.
     # Use mmap_mode='r' to avoid loading the entire file into RAM
-    X_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_X.npy", mmap_mode='r')
-    y_all = np.load(PROCESSED_DIR / "bci2a_all_subjects_y.npy", mmap_mode='r')
+    # Cast to str() to ensure numpy handles mmap safely
+    x_path = str(PROCESSED_DIR / "bci2a_all_subjects_X.npy")
+    y_path = str(PROCESSED_DIR / "bci2a_all_subjects_y.npy")
+    
+    X_all = np.load(x_path, mmap_mode='r')
+    y_all = np.load(y_path, mmap_mode='r')
     return X_all, y_all

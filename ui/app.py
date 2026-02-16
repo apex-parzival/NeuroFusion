@@ -12,11 +12,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 try:
     from pipeline.realtime_mi import (
-        load_mi_demo_epochs,
+        load_mi_data_v2,
     )
     from pipeline.realtime_emotion import (
         load_emotion_models,
-        load_emotion_demo_features,
+        load_emotion_data_v2,
         emo_predict_features,
     )
     from pipeline.ui_model_loader import (
@@ -38,13 +38,13 @@ EMO_CLASSES = ["sad/fatigued", "stressed/anxious", "calm/content", "excited/happ
 def get_cached_mi_epochs():
     """Cache the heavy MI epochs to avoid reloading on every rerun."""
     if not IMPORT_OK: return None, None
-    return load_mi_demo_epochs()
+    return load_mi_data_v2()
 
 @st.cache_resource
 def get_cached_emotion_features():
     """Cache the heavy Emotion features."""
     if not IMPORT_OK: return None, None
-    return load_emotion_demo_features()
+    return load_emotion_data_v2()
 
 @st.cache_resource
 def get_cached_emotion_models():
