@@ -46,8 +46,17 @@ To control a complex environment, we combine (or "fuse") two different types of 
 
 ---
 
+## Real-time Inference Engine (`pipeline/inference_engine.py`)
+This is the "brain" of the backend. It runs as a separate background process:
+1. Listens to the `NeuroFusion_MI` and `NeuroFusion_Emo` LSL streams.
+2. Automatically buffers the incoming stream data into 4-second brainwave epochs.
+3. Triggers the Machine Learning models (EEGNet/SVM) to predict the user's intent.
+4. Publishes every prediction as a JSON message to a public **MQTT IoT broker** (`broker.hivemq.com`).
+
+---
+
 ## 🏗️ The Architecture: How Does the Data Flow?
-Since we don't have a real physical headset yet, we built "simulators" that pretend to be headsets. Here is the step-by-step journey of the data:
+The system is split into **3 independent processes** that communicate over the network, just like a real production IoT system:
 
 ### Step 1: The Headset Simulators (`scripts/lsl_simulator_mi.py` & `emo.py`)
 * **What it does:** These scripts load the giant files of pre-recorded brain waves (`.npy` files). They slice the data up and broadcast it over our computer's Wi-Fi network continuously, exactly like a real physical headset transmitting via Bluetooth.
@@ -64,28 +73,37 @@ Since we don't have a real physical headset yet, we built "simulators" that pret
 * **What it does:** The cleaned data goes into our Machine Learning models. We have trained complex math models (like EEGNet or Support Vector Machines) on hours of brain data. 
 * **Why it flows there:** The AI looks at the shape of the cleaned wave and makes a guess: *"I am 95% sure this person is thinking about their feet!"*
 
-### Step 5: The Smart Home Application (`ui/app.py`)
-* **What it does:** The final guess from the AI arrives at the User Interface. 
-* **Where it goes after:** The app translates the guess into a rule. If AI says "Feet" -> The app updates the TV to "ON". The user sees the TV turn on instantly on their dashboard. Loop complete!
+### Step 5: IoT Broadcast (`pipeline/inference_engine.py` → MQTT)
+* **What it does:** The prediction result (e.g., "TV ON", "Ambient → stressed") is wrapped into a JSON message and published to an **MQTT broker** over the internet.
+* **Why it flows there:** MQTT is the standard protocol used by real Smart Home devices (like Alexa, Google Home, Home Assistant). By publishing here, any device on the network can listen and react.
+
+### Step 6: The Smart Home Dashboard (`ui/app.py`)
+* **What it does:** The Streamlit UI is now a **passive listener**. It subscribes to the MQTT topic and simply displays whatever the backend publishes. It does **zero** AI work itself.
+* **Where it goes after:** The dashboard auto-refreshes every 2 seconds, showing the latest device states and a live event log. The user sees lights, fan, TV, and mood change automatically!
 
 ---
 
 ## 🚀 How to Run the Project
-Because we split this into a real-life architecture, you must run the **Simulators** first, and then the **Application**.
+The system requires **3 terminal windows** running simultaneously:
 
-### 1. Start the Brain Simulators
-Open a terminal, activate your Python environment, and start broadcasting Motor Imagery (Thoughts):
+### Terminal 1: Start the Brain Simulator (Motor Imagery)
 ```bash
 python scripts/lsl_simulator_mi.py
 ```
-Open a **second** terminal and start broadcasting Emotions (Mood):
+
+### Terminal 2: Start the Brain Simulator (Emotion)
 ```bash
 python scripts/lsl_simulator_emo.py
 ```
 
-### 2. Start the Smart Home Hub
-Open a **third** terminal and launch the primary User Interface:
+### Terminal 3: Start the Inference Engine (AI Backend)
+```bash
+python -m pipeline.inference_engine
+```
+
+### Terminal 4: Start the Smart Home Dashboard (UI)
 ```bash
 streamlit run ui/app.py
 ```
-Open your web browser, click "Next Brain Step", and watch as the simulated brain waves are captured, decoded by the AI, and used to control the virtual Smart Home!
+
+Open your browser to `http://localhost:8501` and watch as the dashboard **automatically updates** in real-time as the AI decodes simulated brain waves!

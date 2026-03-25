@@ -1,129 +1,83 @@
-import sys
-import random
-from pathlib import Path
+"""
+NeuroFusion Smart Home Dashboard (Phase 4 - MQTT Listener Architecture)
 
-import numpy as np
+This UI does NOT run any ML inference itself.
+It subscribes to the MQTT topic 'neurofusion/smarthome/state' and passively
+displays whatever the backend Inference Engine publishes.
+
+Run: streamlit run ui/app.py
+"""
+import json
+import threading
+import time
+from datetime import datetime
+
 import streamlit as st
+import paho.mqtt.client as mqtt
 
-# ---------- PATH & IMPORT FIX ----------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# ---------- CONSTANTS ----------
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "neurofusion/smarthome/state"
 
-try:
-    from pipeline.realtime_mi import (
-        load_mi_data_v2,
-    )
-    from pipeline.realtime_emotion import (
-        load_emotion_models,
-        load_emotion_data_v2,
-        emo_predict_features,
-    )
-    from pipeline.ui_model_loader import (
-        get_available_subjects, 
-        load_specific_model, 
-        predict_for_subject
-    )
-    IMPORT_OK = True
-except Exception as e:
-    IMPORT_OK = False
-    IMPORT_ERROR = e
+BRIGHTNESS_LABELS = ["Off", "Low", "Medium", "High"]
+FAN_LABELS = ["Off", "Low", "Medium", "High"]
+
+# ---------- MQTT BACKGROUND LISTENER ----------
+# We use a threading lock to safely share data between the MQTT callback thread
+# and the Streamlit main thread.
+
+_mqtt_lock = threading.Lock()
+_latest_payload = {"state": None, "event_log": []}
 
 
-MI_CLASSES = ["left", "right", "feet", "tongue"]
-EMO_CLASSES = ["sad/fatigued", "stressed/anxious", "calm/content", "excited/happy"]
+def _on_connect(client, userdata, flags, rc):
+    """Called when the MQTT client connects to the broker."""
+    client.subscribe(MQTT_TOPIC)
 
-# ---------- CACHED LOADERS ----------
-@st.cache_resource
-def get_cached_mi_epochs():
-    """Cache the heavy MI epochs to avoid reloading on every rerun."""
-    if not IMPORT_OK: return None, None
-    return load_mi_data_v2()
 
-@st.cache_resource
-def get_cached_emotion_features():
-    """Cache the heavy Emotion features."""
-    if not IMPORT_OK: return None, None
-    return load_emotion_data_v2()
-
-@st.cache_resource
-def get_cached_emotion_models():
-    """Cache the emotion classifier model."""
-    if not IMPORT_OK: return None
-    return load_emotion_models()
-
-@st.cache_resource
-def get_cached_subject_list():
-    """Cache the list of available subjects."""
-    if not IMPORT_OK: return []
+def _on_message(client, userdata, msg):
+    """Called when a new message arrives on the subscribed topic."""
+    global _latest_payload
     try:
-        return get_available_subjects()
+        data = json.loads(msg.payload.decode())
+        with _mqtt_lock:
+            _latest_payload["state"] = data.get("state")
+            event = data.get("last_event")
+            ts = data.get("timestamp", time.time())
+            if event:
+                log_entry = {
+                    "event": event,
+                    "time": datetime.fromtimestamp(ts).strftime("%H:%M:%S"),
+                }
+                _latest_payload["event_log"].insert(0, log_entry)
+                # Keep only last 30 events
+                _latest_payload["event_log"] = _latest_payload["event_log"][:30]
     except Exception:
-        return []
-
-# ---------- STATE HELPERS ----------
-def init_state_if_needed():
-    """Initialize Streamlit session state variables if not present."""
-    if "smart_home" not in st.session_state:
-        st.session_state.smart_home = {
-            "light_brightness": 0,
-            "fan_speed": 0,
-            "tv_on": False,
-            "emergency_alert": False,
-            "ambient_mode": "neutral"
-        }
-    
-    # Load heavy data via cache
-    if "X_mi" not in st.session_state:
-        X_mi, y_mi = get_cached_mi_epochs()
-        if X_mi is not None:
-            st.session_state.X_mi = X_mi
-            st.session_state.y_mi = y_mi
-            
-    if "X_emo" not in st.session_state:
-        X_emo, y_emo = get_cached_emotion_features()
-        if X_emo is not None:
-            st.session_state.X_emo = X_emo
-            st.session_state.y_emo = y_emo
-
-    if "emo_models" not in st.session_state:
-        st.session_state.emo_models = get_cached_emotion_models()
-
-    if "last_step" not in st.session_state:
-        st.session_state.last_step = None
-    if "event_log" not in st.session_state:
-        st.session_state.event_log = []
-    if "step_counter" not in st.session_state:
-        st.session_state.step_counter = 0
+        pass
 
 
-def apply_mi_command(label, state):
-    """Apply Motor Imagery command to smart home state."""
-    if label == 0:
-        state["light_brightness"] = (state["light_brightness"] + 1) % 4
-        action = f"💡 Lights brightness → {state['light_brightness']}"
-    elif label == 1:
-        state["fan_speed"] = (state["fan_speed"] + 1) % 4
-        action = f"🌀 Fan speed → {state['fan_speed']}"
-    elif label == 2:
-        state["tv_on"] = not state["tv_on"]
-        action = f"📺 TV turned {'ON' if state['tv_on'] else 'OFF'}"
-    else:
-        state["emergency_alert"] = True
-        action = "🚨 EMERGENCY ALERT TRIGGERED!"
-    return action
+@st.cache_resource
+def _get_mqtt_client():
+    """Start a single persistent MQTT client in the background (cached across reruns)."""
+    client = mqtt.Client()
+    client.on_connect = _on_connect
+    client.on_message = _on_message
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.loop_start()
+    return client
 
 
-def apply_emotion_quadrant(label, state):
-    """Apply emotion quadrant to ambient mode."""
-    mapping = {
-        0: "sad/fatigued",
-        1: "stressed/anxious",
-        2: "calm/content",
-        3: "excited/happy",
-    }
-    state["ambient_mode"] = mapping.get(label, "neutral")
-    return f"🎭 Ambient mode → {state['ambient_mode']}"
+def _get_state():
+    """Thread-safe read of the latest smart home state from MQTT."""
+    with _mqtt_lock:
+        return _latest_payload.get("state")
+
+
+def _get_event_log():
+    """Thread-safe read of the event log."""
+    with _mqtt_lock:
+        return list(_latest_payload.get("event_log", []))
 
 
 # ---------- MAIN APP ----------
@@ -133,7 +87,9 @@ def main():
         page_icon="🧠",
         layout="wide",
     )
-    init_state_if_needed()
+
+    # Start the MQTT listener (runs once, cached)
+    _get_mqtt_client()
 
     # ----- SIDEBAR -----
     with st.sidebar:
@@ -144,198 +100,110 @@ def main():
             "- 🎧 Emotion: DEAP EEG dataset\n"
         )
 
-        # Show model stats (your actual results)
         st.markdown("### 📊 Model Performance")
         st.markdown("- Motor Imagery (subject-wise combined): **77.59%**")
         st.markdown("- Riemannian (subject-wise): **69.54%**")
 
-        st.markdown("### ℹ️ How to demo")
+        st.divider()
+        st.markdown("### ℹ️ How it works now")
         st.markdown(
-            "1. Select a subject in the dropdown below.\n"
-            "2. Click **Next Brain Step**.\n"
-            "3. Watch control + mood predictions and Smart Home state updates.\n"
+            "1. The **LSL Simulators** broadcast brain data.\n"
+            "2. The **Inference Engine** decodes thoughts & emotions.\n"
+            "3. Commands are sent over **MQTT** (IoT protocol).\n"
+            "4. **This dashboard** passively listens and displays the live state.\n"
         )
 
-        # Subject selection (list models available)
-        subj_options = get_cached_subject_list()
-        selected_subj = st.selectbox("Choose subject (used to load best model)", subj_options, index=0 if subj_options else None)
-        st.session_state.selected_subj = selected_subj
+        st.divider()
+        st.markdown("### 🔗 Connection Status")
+        state = _get_state()
+        if state is not None:
+            st.success("🟢 Connected to Inference Engine")
+        else:
+            st.warning("🟡 Waiting for backend... Click refresh below.")
 
-    st.title("🧠 NeuroFusion Smart Home – BCI + Emotion Control")
+    # ----- HEADER -----
+    st.title("🧠 NeuroFusion Smart Home – Live IoT Dashboard")
+    st.caption(
+        "This dashboard is a **passive listener**. It does not run any AI models. "
+        "It subscribes to the MQTT topic and displays whatever the backend inference engine broadcasts."
+    )
 
-    # If imports failed, show error instead of blank page
-    if not IMPORT_OK:
-        st.error("Failed to import pipeline modules.")
-        st.code(repr(IMPORT_ERROR))
-        st.stop()
+    # Read the latest state
+    state = _get_state()
 
-    smart_home = st.session_state.smart_home
-    X_mi = st.session_state.X_mi
-    y_mi = st.session_state.y_mi
-    X_emo = st.session_state.X_emo
-    y_emo = st.session_state.y_emo
-    subj_id = st.session_state.get("selected_subj")
-
-    col_main, col_state = st.columns([2.2, 1])
-
-    # ----- LEFT: LIVE CONTROL + DETAILS -----
-    with col_main:
-        st.subheader("🔄 Live Brain Event Simulation")
-
-        st.write(
-            "Each step samples a random **motor imagery epoch** "
-            "and a random **emotion feature vector**, then updates the smart home "
-            "based on both *intention* (MI) and *affective state* (DEAP)."
+    if state is None:
+        st.info(
+            "⏳ **No data received yet.** Make sure these 3 scripts are running:\n\n"
+            "1. `python scripts/lsl_simulator_mi.py`\n"
+            "2. `python scripts/lsl_simulator_emo.py`\n"
+            "3. `python -m pipeline.inference_engine`\n\n"
+            "Once the backend starts publishing, this page will update automatically."
         )
+        # Auto-refresh every 2 seconds while waiting
+        time.sleep(2)
+        st.rerun()
+        return
 
-        if st.button("▶ Next Brain Step"):
-            st.session_state.step_counter += 1
+    # ----- MAIN LAYOUT -----
+    col_home, col_log = st.columns([1.5, 1])
 
-            # STRATIFIED RANDOM SAMPLING for better UI diversity
-            # 1. Pick a random target class (0..3)
-            # 2. Find indices of that class in true labels
-            # 3. Pick random index from those candidates
-            
-            # --- Motor Imagery ---
-            target_mi_class = random.randint(0, 3)
-            cand_mi = np.where(y_mi == target_mi_class)[0]
-            if len(cand_mi) > 0:
-                idx_mi = int(np.random.choice(cand_mi))
-            else:
-                idx_mi = random.randint(0, X_mi.shape[0] - 1)
-
-            # --- Emotion ---
-            target_emo_class = random.randint(0, 3)
-            cand_emo = np.where(y_emo == target_emo_class)[0]
-            if len(cand_emo) > 0:
-                idx_emo = int(np.random.choice(cand_emo))
-            else:
-                idx_emo = random.randint(0, X_emo.shape[0] - 1)
-
-            epoch = X_mi[idx_mi]  # shape (n_ch, n_times)
-            true_mi = int(y_mi[idx_mi])
-
-            feat = X_emo[idx_emo]
-            true_emo = int(y_emo[idx_emo])
-
-            # predictions: MI using our new loader (auto-choose best model for chosen subject)
-            try:
-                mi_proba, mi_label = predict_for_subject(subj_id, epoch=epoch)
-                # predict_for_subject returns (probs, label) — earlier versions used (probs,label). ensure order:
-                if isinstance(mi_proba, np.ndarray) and isinstance(mi_label, (int, np.integer)):
-                    pass
-                else:
-                    # some saved models return (label, probs) — normalize
-                    mi_label, mi_proba = mi_proba, mi_label
-            except Exception as e:
-                st.error(f"MI prediction error: {e}")
-                mi_label = 0
-                mi_proba = np.zeros(len(MI_CLASSES))
-
-            mi_action = apply_mi_command(mi_label, smart_home)
-
-            # emotion predictor remains same helper (uses prebuilt features)
-            emo_label, emo_proba = emo_predict_features(feat, st.session_state.emo_models)
-            emo_action = apply_emotion_quadrant(emo_label, smart_home)
-
-            # save last step
-            step_info = {
-                "step": st.session_state.step_counter,
-                "true_mi": true_mi,
-                "mi_label": int(mi_label),
-                "mi_proba": mi_proba.tolist() if hasattr(mi_proba, "tolist") else list(mi_proba),
-                "true_emo": true_emo,
-                "emo_label": int(emo_label),
-                "emo_proba": emo_proba.tolist() if hasattr(emo_proba, "tolist") else list(emo_proba),
-                "mi_action": mi_action,
-                "emo_action": emo_action,
-            }
-            st.session_state.last_step = step_info
-            st.session_state.event_log.insert(0, step_info)  # newest first
-            st.session_state.event_log = st.session_state.event_log[:20]  # keep last 20
-
-        last = st.session_state.last_step
-        if last is not None:
-            st.markdown("### 🧠 Last Inference")
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                st.markdown("**Motor Imagery (Control Channel)**")
-                st.write(
-                    f"True: `{last['true_mi']} ({MI_CLASSES[last['true_mi']]})`  \n"
-                    f"Predicted: `{last['mi_label']} ({MI_CLASSES[last['mi_label']]})`"
-                )
-                st.bar_chart(np.array(last["mi_proba"]))
-                st.success(last["mi_action"])
-
-            with c2:
-                st.markdown("**Emotion (Ambient Channel)**")
-                st.write(
-                    f"True: `{last['true_emo']} ({EMO_CLASSES[last['true_emo']]})`  \n"
-                    f"Predicted: `{last['emo_label']} ({EMO_CLASSES[last['emo_label']]})`"
-                )
-                st.bar_chart(np.array(last["emo_proba"]))
-                st.info(last["emo_action"])
-
-        # Event log
-        with st.expander("🧾 Event Log (last 20 brain steps)", expanded=False):
-            if not st.session_state.event_log:
-                st.caption("No events yet. Click **Next Brain Step** to start.")
-            else:
-                for ev in st.session_state.event_log:
-                    st.markdown(
-                        f"**Step {ev['step']}**  \n"
-                        f"- MI: `{ev['true_mi']} → {ev['mi_label']} "
-                        f"({MI_CLASSES[ev['mi_label']]})`  \n"
-                        f"- Emotion: `{ev['true_emo']} → {ev['emo_label']} "
-                        f"({EMO_CLASSES[ev['emo_label']]})`  \n"
-                        f"- Action: {ev['mi_action']}  \n"
-                        f"- Ambient: {ev['emo_action']}"
-                    )
-                    st.markdown("---")
-
-    # ----- RIGHT: SMART HOME STATE -----
-    with col_state:
+    with col_home:
         st.subheader("🏠 Smart Home State")
 
-        brightness_labels = ["Off", "Low", "Medium", "High"]
-        fan_labels = ["Off", "Low", "Medium", "High"]
+        # Device cards in a 2x2 grid
+        c1, c2 = st.columns(2)
 
-        st.markdown("### 💡 Lights")
-        st.metric("Brightness", brightness_labels[smart_home["light_brightness"]])
-        st.progress((smart_home["light_brightness"] + 1) / 4)
+        with c1:
+            st.markdown("### 💡 Lights")
+            light_val = state.get("light", 0)
+            st.metric("Brightness", BRIGHTNESS_LABELS[light_val])
+            st.progress((light_val + 1) / 4)
 
-        st.markdown("### 🌀 Fan")
-        st.metric("Speed", fan_labels[smart_home["fan_speed"]])
-        st.progress((smart_home["fan_speed"] + 1) / 4)
+        with c2:
+            st.markdown("### 🌀 Fan")
+            fan_val = state.get("fan", 0)
+            st.metric("Speed", FAN_LABELS[fan_val])
+            st.progress((fan_val + 1) / 4)
 
-        st.markdown("### 📺 TV")
-        st.metric("Power", "ON" if smart_home["tv_on"] else "OFF")
+        c3, c4 = st.columns(2)
 
-        st.markdown("### 🚨 Emergency")
-        if smart_home["emergency_alert"]:
-            st.error("EMERGENCY ALERT ACTIVE")
-        else:
-            st.success("No active emergency")
+        with c3:
+            st.markdown("### 📺 TV")
+            tv_on = state.get("tv", False)
+            st.metric("Power", "ON" if tv_on else "OFF")
 
+        with c4:
+            st.markdown("### 🚨 Emergency")
+            if state.get("emergency", False):
+                st.error("🔴 EMERGENCY ALERT ACTIVE")
+            else:
+                st.success("✅ No active emergency")
+
+        st.divider()
         st.markdown("### 🎭 Ambient Mood")
-        st.metric("Mode", smart_home["ambient_mode"])
+        ambient = state.get("ambient", "neutral")
+        mood_emoji = {
+            "sad/fatigued": "😔",
+            "stressed/anxious": "😰",
+            "calm/content": "😌",
+            "excited/happy": "🤩",
+            "neutral": "😐",
+        }
+        st.metric("Current Mood", f"{mood_emoji.get(ambient, '😐')} {ambient}")
 
-        if st.button("🔁 Reset Smart Home State"):
-            st.session_state.smart_home = {
-                "light_brightness": 0,
-                "fan_speed": 0,
-                "tv_on": False,
-                "emergency_alert": False,
-                "ambient_mode": "neutral",
-            }
-            st.session_state.last_step = None
-            st.session_state.event_log = []
-            st.session_state.step_counter = 0
-            st.rerun()
+    with col_log:
+        st.subheader("📜 Live Event Log")
+        event_log = _get_event_log()
+        if not event_log:
+            st.caption("No events received yet.")
+        else:
+            for ev in event_log:
+                st.markdown(f"`{ev['time']}` — {ev['event']}")
+
+    # Auto-refresh every 2 seconds to pick up new MQTT messages
+    time.sleep(2)
+    st.rerun()
 
 
-
-# Streamlit executes top-down, so call main()
+# Streamlit executes top-down
 main()
