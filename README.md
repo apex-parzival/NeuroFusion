@@ -35,6 +35,19 @@ NeuroFusion is a hybrid Brain-Computer Interface (BCI) application that combines
 
 ## Usage
 
+### Phase 1: Hardware Simulation (LSL Streams)
+Before running the main app, you can start the Lab Streaming Layer (LSL) simulators. These scripts broadcast the offline dataset over your local network as if a real EEG headset were plugged in.
+
+1.  **Start the Motor Imagery BCI Stream:**
+    ```bash
+    python scripts/lsl_simulator_mi.py
+    ```
+2.  **Start the Emotion Feature Stream:**
+    ```bash
+    python scripts/lsl_simulator_emo.py
+    ```
+
+### Phase 2: Main Application
 1.  **Run the application**:
     ```bash
     streamlit run ui/app.py

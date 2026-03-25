@@ -7,3 +7,4 @@ mne>=1.6.0
 tensorflow>=2.15.0; sys_platform != 'darwin' or platform_machine != 'arm64'
 tensorflow-macos>=2.15.0; sys_platform == 'darwin' and platform_machine == 'arm64'
 python-dotenv>=1.0.0
+pylsl>=1.16.2
