@@ -5,9 +5,11 @@ and feeds them to the subject-specific ML models for continuous command predicti
 """
 import sys
 import time
+import json
 import numpy as np
 from pathlib import Path
 from pylsl import resolve_stream, StreamInlet
+import paho.mqtt.client as mqtt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -39,6 +41,15 @@ def apply_emo_mode(label, state):
     state["ambient"] = EMO_CLASSES[label]
     return f"🎭 Ambient -> {state['ambient']}"
 
+def publish_iot_state(mqtt_client, state, last_event=None):
+    """Publish the current smart home state wrapped with an event log to MQTT."""
+    payload = {
+        "state": state,
+        "last_event": last_event,
+        "timestamp": time.time()
+    }
+    mqtt_client.publish("neurofusion/smarthome/state", json.dumps(payload))
+
 def main():
     print("🧠 Initializing NeuroFusion Real-time Inference Engine...")
     
@@ -51,6 +62,11 @@ def main():
     print("Loading Emotion classifiers...")
     emo_models = load_emotion_models()
     print(f"Loading Base Motor Imagery Models for {subj_id} will happen dynamically on first inference.")
+
+    print("\n🌐 Connecting to Public IoT MQTT Broker (broker.hivemq.com)...")
+    mqtt_client = mqtt.Client()
+    mqtt_client.connect("broker.hivemq.com", 1883, 60)
+    mqtt_client.loop_start()
 
     print("\n📡 Looking for Motor Imagery LSL stream ('NeuroFusion_MI')...")
     mi_streams = resolve_stream('name', 'NeuroFusion_MI')
@@ -85,7 +101,9 @@ def main():
                 emo_pred, emo_prob = emo_predict_features(latest_emo_feat, emo_models)
                 
                 action = apply_emo_mode(emo_pred, state)
-                print(f"[AFFECTIVE] {action} | Raw Pred: {EMO_CLASSES[emo_pred]}")
+                log_msg = f"[AFFECTIVE] {action} | Raw Pred: {EMO_CLASSES[emo_pred]}"
+                print(log_msg)
+                publish_iot_state(mqtt_client, state, last_event=log_msg)
                 
             # 3. Perform MI Inference when Buffer reaches 4 seconds (1000 samples)
             if len(mi_buffer) >= epoch_samples:
@@ -101,7 +119,9 @@ def main():
                         mi_label, mi_prob = mi_prob, mi_label
                         
                     action = apply_mi_command(int(mi_label), state)
-                    print(f"[MOTOR]     {action}  | Raw Pred: {MI_CLASSES[int(mi_label)]}")
+                    log_msg = f"[MOTOR]     {action}  | Raw Pred: {MI_CLASSES[int(mi_label)]}"
+                    print(log_msg)
+                    publish_iot_state(mqtt_client, state, last_event=log_msg)
                     
                 except Exception as e:
                     print(f"[ERROR] MI Prediction Failed: {e}")
