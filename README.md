@@ -51,19 +51,45 @@ This is the "brain" of the backend. It runs as a separate background process:
 1. Listens to the `NeuroFusion_MI` and `NeuroFusion_Emo` LSL streams.
 2. Automatically buffers the incoming stream data into 4-second brainwave epochs.
 3. Triggers the Machine Learning models (EEGNet/SVM) to predict the user's intent.
-4. Publishes every prediction as a JSON message to a public **MQTT IoT broker** (`broker.hivemq.com`).
+4. Writes every prediction (with full probability distributions) to a **local state file** (`runtime/state.json`), which the dashboard polls every 2 seconds.
 
 ---
 
 ## 🏗️ The Architecture: How Does the Data Flow?
-The system is split into **3 independent processes** that communicate over the network, just like a real production IoT system:
+The system is split into **4 independent processes** that communicate via LSL streams and a local state file:
+
+```
+┌──────────────────────┐     ┌──────────────────────┐
+│  LSL Simulator (MI)  │     │  LSL Simulator (Emo)  │
+│  250 Hz, 25 channels │     │  1 Hz, 160 features   │
+└──────────┬───────────┘     └──────────┬────────────┘
+           │  LSL Stream                │  LSL Stream
+           └──────────┐    ┌────────────┘
+                      ▼    ▼
+              ┌───────────────────┐
+              │  Inference Engine │
+              │  (AI Backend)     │
+              │  EEGNet / SVM     │
+              └────────┬──────────┘
+                       │  Writes JSON
+                       ▼
+              ┌───────────────────┐
+              │ runtime/state.json│
+              └────────┬──────────┘
+                       │  Reads JSON
+                       ▼
+              ┌───────────────────┐
+              │  Streamlit UI     │
+              │  (Dashboard)      │
+              └───────────────────┘
+```
 
 ### Step 1: The Headset Simulators (`scripts/lsl_simulator_mi.py` & `emo.py`)
-* **What it does:** These scripts load the giant files of pre-recorded brain waves (`.npy` files). They slice the data up and broadcast it over our computer's Wi-Fi network continuously, exactly like a real physical headset transmitting via Bluetooth.
+* **What it does:** These scripts load the giant files of pre-recorded brain waves (`.npy` files). They slice the data up and broadcast it over our computer's local network continuously via **LSL (Lab Streaming Layer)**, exactly like a real physical headset transmitting via Bluetooth.
 * **Why it flows there:** To create a realistic environment. When we buy a real headset later, we just turn off these scripts and connect the real headset. Our application won't even know the difference!
 
 ### Step 2: The Data Buffer/Listener (Internal Pipeline)
-* **What it does:** The main app "listens" to the network. Instead of looking at 1 millisecond of brain data (which is too short to understand), it gathers a "chunk" of time—like recording a 4-second video clip of the brain waves. This chunk is called an **epoch**.
+* **What it does:** The inference engine "listens" to the LSL streams. Instead of looking at 1 millisecond of brain data (which is too short to understand), it gathers a "chunk" of time—like recording a 4-second video clip of the brain waves. This chunk is called an **epoch**.
 
 ### Step 3: Feature Extraction (Cleaning the Noise)
 * **What it does:** Raw brain waves look like scribbles. We pass the 4-second "epoch" through filters (specifically, something called CSP - Common Spatial Pattern). 
@@ -73,37 +99,80 @@ The system is split into **3 independent processes** that communicate over the n
 * **What it does:** The cleaned data goes into our Machine Learning models. We have trained complex math models (like EEGNet or Support Vector Machines) on hours of brain data. 
 * **Why it flows there:** The AI looks at the shape of the cleaned wave and makes a guess: *"I am 95% sure this person is thinking about their feet!"*
 
-### Step 5: IoT Broadcast (`pipeline/inference_engine.py` → MQTT)
-* **What it does:** The prediction result (e.g., "TV ON", "Ambient → stressed") is wrapped into a JSON message and published to an **MQTT broker** over the internet.
-* **Why it flows there:** MQTT is the standard protocol used by real Smart Home devices (like Alexa, Google Home, Home Assistant). By publishing here, any device on the network can listen and react.
+### Step 5: State File Output (`runtime/state.json`)
+* **What it does:** The prediction result (e.g., "TV ON", "Ambient → stressed") along with **full probability distributions** for all classes is written to a local JSON file.
+* **Why it flows there:** This provides a simple, reliable IPC (Inter-Process Communication) mechanism. No external network dependency — the dashboard simply reads this file.
 
 ### Step 6: The Smart Home Dashboard (`ui/app.py`)
-* **What it does:** The Streamlit UI is now a **passive listener**. It subscribes to the MQTT topic and simply displays whatever the backend publishes. It does **zero** AI work itself.
-* **Where it goes after:** The dashboard auto-refreshes every 2 seconds, showing the latest device states and a live event log. The user sees lights, fan, TV, and mood change automatically!
+* **What it does:** The Streamlit UI is a **passive listener**. It reads the `runtime/state.json` file and displays whatever the backend has written. It does **zero** AI work itself.
+* **Where it goes after:** The dashboard auto-refreshes every 2 seconds, showing the latest device states, probability bar charts for all prediction classes, and a live event log.
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+* Python 3.9+
+* Git
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/apex-parzival/NeuroFusion.git
+cd NeuroFusion
+
+# Create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # macOS/Linux
+
+# Install dependencies
+pip install -r requirements.txt
+```
 
 ---
 
 ## 🚀 How to Run the Project
-The system requires **3 terminal windows** running simultaneously:
+The system requires **4 terminal windows** running simultaneously. **Start them in order:**
 
 ### Terminal 1: Start the Brain Simulator (Motor Imagery)
 ```bash
 python scripts/lsl_simulator_mi.py
 ```
+> Loads pre-recorded BCI IV 2a data and broadcasts at 250 Hz over LSL.
 
 ### Terminal 2: Start the Brain Simulator (Emotion)
 ```bash
 python scripts/lsl_simulator_emo.py
 ```
+> Loads pre-extracted DEAP emotion features and broadcasts at 1 Hz over LSL.
 
 ### Terminal 3: Start the Inference Engine (AI Backend)
 ```bash
 python -m pipeline.inference_engine
 ```
+> Connects to both LSL streams, runs real-time ML inference, and writes predictions to `runtime/state.json`.
 
 ### Terminal 4: Start the Smart Home Dashboard (UI)
 ```bash
 streamlit run ui/app.py
 ```
+> Opens a live dashboard at `http://localhost:8501`.
+
+---
+
+## 🖥️ Dashboard Features
+- **Smart Home State** — Live status of Lights, Fan, TV, and Emergency
+- **Ambient Mood** — Real-time emotion classification (sad/fatigued, stressed/anxious, calm/content, excited/happy)
+- **Probability Bar Charts** — Full probability distributions for both Motor Imagery and Emotion predictions
+- **Live Event Log** — Timestamped stream of all predictions and state changes
+
+---
+
+## 📊 Model Performance
+| Model | Accuracy |
+|-------|----------|
+| Motor Imagery (Combined, subject-wise) | **77.59%** |
+| Riemannian (subject-wise) | **69.54%** |
 
 Open your browser to `http://localhost:8501` and watch as the dashboard **automatically updates** in real-time as the AI decodes simulated brain waves!

@@ -385,3 +385,6 @@ config_local.py
 settings_local.py
 .secrets
 config/secrets.json
+
+# Runtime state (generated at runtime)
+runtime/

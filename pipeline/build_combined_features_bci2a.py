@@ -63,7 +63,7 @@ def spectral_features_from_epoch(epoch, fs=FS):
         freqs, psd = welch(chsig, fs=fs, nperseg=nperseg)
         for (fmin, fmax) in SPECTRAL_BANDS.values():
             mask = (freqs >= fmin) & (freqs <= fmax)
-            power = np.trapz(psd[mask], freqs[mask])
+            power = np.trapezoid(psd[mask], freqs[mask])
             feats.append(np.log(power + 1e-12))
     return np.array(feats, dtype=np.float32)
 

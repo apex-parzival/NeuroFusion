@@ -46,7 +46,7 @@ def bandpower_welch(signal_1d, fs, fmin, fmax):
     freqs, psd = welch(signal_1d, fs=fs, nperseg=fs * 2)
     # Boolean mask for freq range
     mask = (freqs >= fmin) & (freqs <= fmax)
-    return np.trapz(psd[mask], freqs[mask])
+    return np.trapezoid(psd[mask], freqs[mask])
 
 
 def extract_features_for_trial(trial_data):

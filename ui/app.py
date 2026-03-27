@@ -1,83 +1,35 @@
 """
-NeuroFusion Smart Home Dashboard (Phase 4 - MQTT Listener Architecture)
+NeuroFusion Smart Home Dashboard (Local File IPC Architecture)
 
 This UI does NOT run any ML inference itself.
-It subscribes to the MQTT topic 'neurofusion/smarthome/state' and passively
-displays whatever the backend Inference Engine publishes.
+It reads the state from 'runtime/state.json' written by the Inference Engine,
+and passively displays the live smart home state.
 
 Run: streamlit run ui/app.py
 """
 import json
-import threading
 import time
-from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
-import paho.mqtt.client as mqtt
 
 # ---------- CONSTANTS ----------
-MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 1883
-MQTT_TOPIC = "neurofusion/smarthome/state"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+STATE_FILE = PROJECT_ROOT / "runtime" / "state.json"
 
 BRIGHTNESS_LABELS = ["Off", "Low", "Medium", "High"]
 FAN_LABELS = ["Off", "Low", "Medium", "High"]
 
-# ---------- MQTT BACKGROUND LISTENER ----------
-# We use a threading lock to safely share data between the MQTT callback thread
-# and the Streamlit main thread.
 
-_mqtt_lock = threading.Lock()
-_latest_payload = {"state": None, "event_log": []}
-
-
-def _on_connect(client, userdata, flags, rc):
-    """Called when the MQTT client connects to the broker."""
-    client.subscribe(MQTT_TOPIC)
-
-
-def _on_message(client, userdata, msg):
-    """Called when a new message arrives on the subscribed topic."""
-    global _latest_payload
+def _read_state_file():
+    """Read the latest state from the local JSON file."""
     try:
-        data = json.loads(msg.payload.decode())
-        with _mqtt_lock:
-            _latest_payload["state"] = data.get("state")
-            event = data.get("last_event")
-            ts = data.get("timestamp", time.time())
-            if event:
-                log_entry = {
-                    "event": event,
-                    "time": datetime.fromtimestamp(ts).strftime("%H:%M:%S"),
-                }
-                _latest_payload["event_log"].insert(0, log_entry)
-                # Keep only last 30 events
-                _latest_payload["event_log"] = _latest_payload["event_log"][:30]
+        if STATE_FILE.exists():
+            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            return data
     except Exception:
         pass
-
-
-@st.cache_resource
-def _get_mqtt_client():
-    """Start a single persistent MQTT client in the background (cached across reruns)."""
-    client = mqtt.Client()
-    client.on_connect = _on_connect
-    client.on_message = _on_message
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    client.loop_start()
-    return client
-
-
-def _get_state():
-    """Thread-safe read of the latest smart home state from MQTT."""
-    with _mqtt_lock:
-        return _latest_payload.get("state")
-
-
-def _get_event_log():
-    """Thread-safe read of the event log."""
-    with _mqtt_lock:
-        return list(_latest_payload.get("event_log", []))
+    return None
 
 
 # ---------- MAIN APP ----------
@@ -87,9 +39,6 @@ def main():
         page_icon="🧠",
         layout="wide",
     )
-
-    # Start the MQTT listener (runs once, cached)
-    _get_mqtt_client()
 
     # ----- SIDEBAR -----
     with st.sidebar:
@@ -105,31 +54,35 @@ def main():
         st.markdown("- Riemannian (subject-wise): **69.54%**")
 
         st.divider()
-        st.markdown("### ℹ️ How it works now")
+        st.markdown("### ℹ️ How it works")
         st.markdown(
             "1. The **LSL Simulators** broadcast brain data.\n"
             "2. The **Inference Engine** decodes thoughts & emotions.\n"
-            "3. Commands are sent over **MQTT** (IoT protocol).\n"
-            "4. **This dashboard** passively listens and displays the live state.\n"
+            "3. State is written to a **local file** (`runtime/state.json`).\n"
+            "4. **This dashboard** polls the file and displays the live state.\n"
         )
 
         st.divider()
         st.markdown("### 🔗 Connection Status")
-        state = _get_state()
+
+    # Read the latest state from file
+    data = _read_state_file()
+    state = data.get("state") if data else None
+    event_log = data.get("event_log", []) if data else []
+
+    # Update sidebar connection status
+    with st.sidebar:
         if state is not None:
             st.success("🟢 Connected to Inference Engine")
         else:
-            st.warning("🟡 Waiting for backend... Click refresh below.")
+            st.warning("🟡 Waiting for backend...")
 
     # ----- HEADER -----
     st.title("🧠 NeuroFusion Smart Home – Live IoT Dashboard")
     st.caption(
         "This dashboard is a **passive listener**. It does not run any AI models. "
-        "It subscribes to the MQTT topic and displays whatever the backend inference engine broadcasts."
+        "It reads the state file written by the backend inference engine."
     )
-
-    # Read the latest state
-    state = _get_state()
 
     if state is None:
         st.info(
@@ -139,7 +92,6 @@ def main():
             "3. `python -m pipeline.inference_engine`\n\n"
             "Once the backend starts publishing, this page will update automatically."
         )
-        # Auto-refresh every 2 seconds while waiting
         time.sleep(2)
         st.rerun()
         return
@@ -191,16 +143,47 @@ def main():
         }
         st.metric("Current Mood", f"{mood_emoji.get(ambient, '😐')} {ambient}")
 
+    # ----- PROBABILITY DISTRIBUTIONS -----
+    st.divider()
+    prob_col1, prob_col2 = st.columns(2)
+
+    with prob_col1:
+        st.subheader("🧩 Motor Imagery Probabilities")
+        mi_probs = state.get("mi_probs")
+        if mi_probs and isinstance(mi_probs, dict):
+            import pandas as pd
+            df_mi = pd.DataFrame({
+                "Class": list(mi_probs.keys()),
+                "Probability": list(mi_probs.values())
+            }).set_index("Class")
+            st.bar_chart(df_mi, horizontal=True)
+        else:
+            st.caption("Waiting for first MI prediction...")
+
+    with prob_col2:
+        st.subheader("🎭 Emotion Probabilities")
+        emo_probs = state.get("emo_probs")
+        if emo_probs and isinstance(emo_probs, dict):
+            import pandas as pd
+            df_emo = pd.DataFrame({
+                "Class": list(emo_probs.keys()),
+                "Probability": list(emo_probs.values())
+            }).set_index("Class")
+            st.bar_chart(df_emo, horizontal=True)
+        else:
+            st.caption("Waiting for first Emotion prediction...")
+
+    # ----- EVENT LOG -----
+    st.divider()
     with col_log:
         st.subheader("📜 Live Event Log")
-        event_log = _get_event_log()
         if not event_log:
             st.caption("No events received yet.")
         else:
             for ev in event_log:
                 st.markdown(f"`{ev['time']}` — {ev['event']}")
 
-    # Auto-refresh every 2 seconds to pick up new MQTT messages
+    # Auto-refresh every 2 seconds to pick up new state
     time.sleep(2)
     st.rerun()
 
