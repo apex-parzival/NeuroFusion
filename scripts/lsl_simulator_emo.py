@@ -1,55 +1,90 @@
 """
-Simulates an EEG headset passing through an emotion-feature extraction pipeline via LSL.
-Broadcasts a new emotion feature vector from the DEAP dataset every 1 second.
+Simulates emotion feature stream via LSL (DEAP dataset).
+live_demo  → balanced cycling through all 4 emotion quadrants
+scenarios  → forced to the correct quadrant using real DEAP labels
 """
-
 import time
+import json
 import numpy as np
 from pylsl import StreamInfo, StreamOutlet
 from pathlib import Path
 
-# Streaming features, so we don't need 250Hz. Let's broadcast 1 updated state per second.
-FS = 1 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FS            = 1
+PROJECT_ROOT  = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = PROJECT_ROOT / "processed" / "deap"
 
+SCENARIO_QUAD = {
+    "sleep_mode":     0,   # sad/fatigued
+    "emergency_test": 1,   # stressed/anxious
+    "movie_night":    2,   # calm/content
+}
+
 def main():
-    print("Loading Emotion Feature dataset for simulation...")
-    data_path = PROCESSED_DIR / "deap_features_X.npy"
-    
-    if not data_path.exists():
-        print(f"Error: Could not find {data_path}. Please download DEAP data and run the preprocessing script.")
+    print("Loading DEAP Emotion features...")
+    feat_path  = PROCESSED_DIR / "deap_features_X.npy"
+    label_path = PROCESSED_DIR / "deap_labels_quadrant.npy"
+
+    if not feat_path.exists():
+        print(f"Missing: {feat_path}")
         return
 
-    X = np.load(str(data_path), mmap_mode='r')
+    X      = np.load(str(feat_path),  mmap_mode='r')
+    labels = np.load(str(label_path), mmap_mode='r').astype(int)
+
+    # Build per-quadrant index pools from real labels
+    idx_per_quad = {q: np.where(labels == q)[0] for q in range(4)}
+    for q, pool in idx_per_quad.items():
+        print(f"  Quadrant {q}: {len(pool)} samples")
+
     n_trials, n_feats = X.shape
-    
-    # Create the LSL Stream Information
-    info = StreamInfo(
-        name='NeuroFusion_Emo',
-        type='EmotionFeatures',
-        channel_count=n_feats,
-        nominal_srate=FS,
-        channel_format='float32',
-        source_id='neurofusion_emo_sim_67890'
-    )
-    
+    info   = StreamInfo('NeuroFusion_Emo', 'EmotionFeatures',
+                        n_feats, FS, 'float32', 'nf_emo_sim')
     outlet = StreamOutlet(info)
-    
-    print(f"✅ Started LSL Stream 'NeuroFusion_Emo'. Broadcasting {n_feats} features at {FS} Hz.")
-    print("Press Ctrl+C to stop the simulator.")
-    
+    print(f"✅ LSL stream 'NeuroFusion_Emo' started — {n_feats} features @ {FS} Hz")
+    print("Ctrl+C to stop.\n")
+
+    cfg_path     = PROJECT_ROOT / "runtime" / "config.json"
+    cfg_tick     = 0
+    cur_scenario = "live_demo"
+
+    # live_demo: cycle through quadrants every 8 seconds
+    cycle_quad  = 0
+    cycle_count = 0
+    CYCLE_EVERY = 8   # seconds (= ticks at 1 Hz)
+
     try:
         while True:
-            # Pick a random feature vector to simulate continuous affective state changes
-            trial_idx = np.random.randint(0, n_trials)
+            # Read config every 3 ticks
+            if cfg_tick % 3 == 0:
+                try:
+                    if cfg_path.exists():
+                        cur_scenario = json.loads(cfg_path.read_text()).get("scenario", "live_demo")
+                except Exception:
+                    pass
+            cfg_tick += 1
+
+            forced = SCENARIO_QUAD.get(cur_scenario)
+
+            if forced is not None:
+                # Scenario active → pick only from correct quadrant
+                pool = idx_per_quad.get(forced, [])
+                trial_idx = int(np.random.choice(pool)) if len(pool) else np.random.randint(0, n_trials)
+            else:
+                # live_demo → cycle quadrants so ALL emotions are shown
+                cycle_count += 1
+                if cycle_count >= CYCLE_EVERY:
+                    cycle_count = 0
+                    cycle_quad  = (cycle_quad + 1) % 4
+
+                pool = idx_per_quad.get(cycle_quad, [])
+                trial_idx = int(np.random.choice(pool)) if len(pool) else np.random.randint(0, n_trials)
+
             feat = X[trial_idx].tolist()
-            
             outlet.push_sample(feat)
             time.sleep(1.0 / FS)
-            
+
     except KeyboardInterrupt:
-        print("\nStopping Emotion simulator.")
+        print("\nStopped.")
 
 if __name__ == '__main__':
     main()
