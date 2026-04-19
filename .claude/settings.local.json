@@ -4,7 +4,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('pipeline/inference_engine.py'\\).read\\(\\)\\); print\\('engine OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('ui/app.py'\\).read\\(\\)\\); print\\('app OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('pipeline/inference_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('engine OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('ui/app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('app OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('ui/app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('app OK'\\)\")",
+      "Bash(gh repo *)"
     ]
   }
 }
